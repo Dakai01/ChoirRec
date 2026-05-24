@@ -1,0 +1,3 @@
+tensorflow>=2.13
+numpy>=1.23
+scikit-learn>=1.2
