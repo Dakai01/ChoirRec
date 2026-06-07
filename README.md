@@ -1,81 +1,118 @@
 # ChoirRec
 
-A faithful, runnable re-implementation of
+A PyTorch implementation of **ChoirRec: Semantic User Grouping via LLMs for
+Conversion Rate Prediction of Low-Activity Users** (Zhai et al.,
+arXiv:2510.09393, 2025).
 
-> **ChoirRec: Semantic User Grouping via LLMs for Conversion Rate Prediction
-> of Low-Activity Users.** Zhai et al., arXiv:2510.09393, 2025.
+## What this repository is (and is NOT)
 
-This repository reproduces the *generation – representation – modeling*
-pipeline described in the paper using TensorFlow 2 and a tiny synthetic
-dataset, so the code is fully self-contained and trains in seconds.
+**It is** a small, runnable example that exercises the full ChoirRec pipeline
+end to end, to illustrate the algorithm logic of the paper.
 
-## Architecture
-
-The implementation mirrors the paper one module per file:
-
-| Paper Section | File | What it does |
-|---|---|---|
-| §4.2 Semantic Group Generation | [choirrec/llm.py](choirrec/llm.py) | Synthesises a per-user semantic profile via an LLM (Qwen3-30B-A3B) and embeds it with Qwen3-Embedding-8B. Includes a deterministic mock backend for offline runs. Embeddings are Matryoshka-truncated to 512 dims. |
-| §4.2.2 Hierarchical Group Construction | [choirrec/grouping.py](choirrec/grouping.py) | RQ-KMeans with `S=3` stages and `k=256` centroids per stage. |
-| §4.3 Group-aware Hierarchical Representation | [choirrec/representation.py](choirrec/representation.py) | Hierarchical group-ID codes, group attribute completion (majority vote inside the leaf group), and aggregated group-level behavioural sequences. |
-| §4.4 Group-aware Multi-granularity Module | [choirrec/model.py](choirrec/model.py) | Dual-channel (Individual / Group), asymmetric injection (group → individual only), reliability-gated knowledge distillation, and adaptive logit fusion. |
-| §5.1 Implementation Details | [choirrec/pipeline.py](choirrec/pipeline.py) | Adagrad with lr decay 0.01 → 0.001, batch size 1024, λ=0.005 distillation weight, AUC + GAUC evaluation. |
-| §3 Problem Formulation | [choirrec/data.py](choirrec/data.py) | Synthetic CVR dataset generator that mimics Taobao's long-tail click distribution. |
+**It is NOT** an industrial-grade serving system. The bundled data is
+**synthetic**, and the features, model, and hyperparameters are all
+**simplified** — everything is for demonstrating the algorithm flow only, not
+for drawing business conclusions.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
 
-# Tiny smoke test (~5 seconds end-to-end on CPU)
-python -m choirrec.train --small
+# 1) Preprocessing: raw users.tsv -> data (group ids etc.)
+python -m preprocessing.main
 
-# Full synthetic run with paper-faithful defaults
-python -m choirrec.train --epochs 3
-```
-
-To plug in real Qwen models, install `dashscope`, set
-`DASHSCOPE_API_KEY`, and run with `--llm-backend qwen`.
-
-## Outputs
-
-The pipeline prints per-epoch losses and final test metrics:
-
-```
-=== Final test metrics ===
-  auc:        ...   # Section 5.1: AUC
-  gauc:       ...   # Section 5.1: user-weighted GAUC (primary metric)
-  gauc_low:   ...   # GAUC restricted to low-activity users
-  gauc_high:  ...   # GAUC restricted to high-activity users
+# 2) Recommender: train + evaluate the CVR model on the data
+python -m recommender.main
 ```
 
 ## Project layout
 
 ```
-choirrec/
-├── __init__.py
-├── config.py          # Dataclass-based configuration (paper hyperparameters)
-├── data.py            # Synthetic long-tail dataset generator
-├── llm.py             # LLM profile synthesis + embedding (mock | qwen)
-├── grouping.py        # RQ-KMeans hierarchical clustering
-├── representation.py  # Group-aware hierarchical priors
-├── model.py           # ChoirRec dual-channel TF model
-├── pipeline.py        # End-to-end training & evaluation
-└── train.py           # CLI entry point
+data/                      # all data artifacts
+├── users.tsv              # LLM-prompt input: plaintext user logs
+├── exposure_samples.tsv   # online exposure labels (independent of features)
+├── rec_samples.tsv        # individual-channel input: id-form (user, candidate, label) rows
+├── vocab.json             # string -> integer id mappings (+ vocab sizes)
+└── group_ids.tsv          # per-user group ids + group-voted attrs + group sequences
+
+preprocessing/             # raw user data -> user group ids
+├── config.py              # hyperparameters (RQ-KMeans, LLM, paths)
+├── features.py            # plaintext loader + windowed feature engineering
+├── llm.py                 # Qwen profile synthesis + embedding
+├── RQKmeans.py            # RQ-KMeans hierarchical clustering
+├── representation.py      # group attribute vote + group sequences
+├── writers.py             # serialises the data/ artifacts
+└── main.py                # one-click preprocessing entry point
+
+recommender/               # id-form data -> CVR prediction
+├── config.py              # model + training hyperparameters
+├── dataset.py             # assembles per-sample tensors from data/ artifacts
+├── model.py               # EmbeddingLayer + TargetAttention + dual-channel CVR tower
+├── metrics.py             # AUC / GAUC (user-weighted)
+└── main.py                # one-click train + evaluate entry point
 ```
 
+## Profile synthesis prompt
+
+The system prompt used for LLM profile synthesis (see
+[preprocessing/llm.py](preprocessing/llm.py)):
+
+```text
+## Role
+You are a data-summarization expert proficient in information extraction and
+user-behavior analysis, skilled at summarizing user information and reasoning
+about user profiles.
+
+## Task
+Strictly follow the rules below to produce a high-fidelity summary of the input
+user information. Do not omit key information, do not fabricate content, and
+ensure traceability and completeness. The resulting profile will be embedded and
+clustered to form cross-activity semantic user groups, so emphasize stable,
+transferable long-term preferences and filter out transient noise, allowing
+semantically similar users to be grouped.
+
+## Input Format
+The input contains [Basic Info], [Transaction Behavior], and [Search Behavior].
+Transaction behaviour is split into short-term (last 7 days), medium-term (last
+30 days), and long-term (last 365 days) sections. Each transaction line has the
+format:
+  - L1 Category (Leaf Category - Purchase Count - Price Power)
+where Price Power is in [0, 1]: the closer to 1, the higher the price tier the
+user buys within that leaf category; 0.5 denotes the median tier.
+
+## Output Format
+[User Profile Summary]
+- Core Identity & Life Stage: ...
+- Interest Points: ...
+- Consumption Philosophy & Decision Drivers: ...
+
+## Module Specification
+Extract explicit information and infer implicit information to output a highly
+distinctive, low-ambiguity profile.
+1. Core Identity & Life Stage: Based on basic info and the life scenarios
+   reflected by high-frequency consumption, precisely locate the user's life
+   stage (e.g., parenting family, solo young adult) and primary social role
+   (e.g., household purchasing decision-maker).
+2. Interest Points: Within a single paragraph, clearly integrate:
+   (1) Primary: the 1-3 categories with the highest purchase counts and their
+   consumption tier, representing core stable consumption;
+   (2) Secondary: medium-to-low purchase-count categories and their tier,
+   representing secondary consumption areas;
+   (3) Recent: categories appearing in the short-term section but rare or
+   absent in the long-term section, and their tier, reflecting potential new
+   demand.
+3. Consumption Philosophy & Decision Drivers: Combining the core profile,
+   overall price-power tendency, price-power differences across categories, and
+   purchase patterns, summarize the user's core consumption values (e.g.,
+   quality-oriented, value-for-money first) and key decision factors (e.g.,
+   price sensitivity).
+
 ## Notes
+1. The summary must stay faithful to the original information, concise yet
+   complete.
+2. Summarize each module in a single paragraph with no internal subdivisions.
+3. Even when behavioral signals are sparse, still produce a usable profile by
+   reasoning from whatever explicit and attribute cues are available.
+```
 
-* The synthetic data is intentionally tiny (default 1k users / 200 items)
-  so the entire pipeline runs in a few seconds. Replace `data.py` with
-  your real loader for production data; the rest of the modules
-  (LLM → RQ-KMeans → group priors → dual-channel model) work unchanged.
-* `--llm-backend mock` produces deterministic hashing-based embeddings,
-  guaranteeing reproducible training on any machine. Switch to
-  `--llm-backend qwen` for real LLM-driven semantic grouping.
-
-## Reference
-
-Dakai Zhai, Jiong Gao, Boya Du, Junwei Xu, Qijie Shen, Jialin Zhu and
-Yuning Jiang. *ChoirRec: Semantic User Grouping via LLMs for Conversion
-Rate Prediction of Low-Activity Users.* arXiv:2510.09393, 2025.
