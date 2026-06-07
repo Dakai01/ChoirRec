@@ -1,4 +1,5 @@
 """Configuration for the recommender (CVR prediction)."""
+# update date：2026-06-07
 
 from __future__ import annotations
 

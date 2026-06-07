@@ -1,4 +1,5 @@
 """One-click entry point that trains and evaluates the dual-channel CVR model."""
+# update date：2026-06-07
 
 from __future__ import annotations
 

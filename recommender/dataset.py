@@ -1,4 +1,5 @@
 """Assembles per-sample feature tensors from the preprocessing artifacts."""
+# update date：2026-06-07
 
 from __future__ import annotations
 

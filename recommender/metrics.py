@@ -1,4 +1,5 @@
 """Ranking metrics: AUC and user-grouped AUC (GAUC)."""
+# update date：2026-06-07
 
 from __future__ import annotations
 

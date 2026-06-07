@@ -1,4 +1,5 @@
 """Builds group-level features that complement sparse individual signals."""
+# update date：2026-06-07
 
 from __future__ import annotations
 

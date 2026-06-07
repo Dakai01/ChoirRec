@@ -1,4 +1,5 @@
 """Parses the user log and exposure samples into time-windowed features."""
+# update date：2026-06-07
 
 from __future__ import annotations
 
